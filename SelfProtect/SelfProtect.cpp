@@ -4,9 +4,18 @@
 #include "Communication.h"
 
 
+static
 NTSTATUS
 SelfProtectUnloadCallback(
     _In_ FLT_FILTER_UNLOAD_FLAGS Flags
+);
+
+static
+NTSTATUS
+FLTAPI
+SelfProtectQueryTearDown(
+    _In_ PCFLT_RELATED_OBJECTS FltObjects,
+    _In_ FLT_INSTANCE_QUERY_TEARDOWN_FLAGS Flags
 );
 
 SELF_PROTECT_DATA gSelfProtectData = { 0 };
@@ -33,7 +42,7 @@ const FLT_REGISTRATION gFltRegistration =
     SelfProtectUnloadCallback,                      // FilterUnload
     
     nullptr,                                        // InstanceSetupCallback
-    nullptr,                                        // InstanceQueryTeardownCallback
+    SelfProtectQueryTearDown,                       // InstanceQueryTeardownCallback
     nullptr,                                        // InstanceTeardownStartCallback
     nullptr,                                        // InstanceTeardownCompleteCallback
 
@@ -45,6 +54,7 @@ const FLT_REGISTRATION gFltRegistration =
     nullptr,                                        // SectionNotificationCallback
 };
 
+static
 NTSTATUS
 SelfProtectUnloadCallback(
     _In_ FLT_FILTER_UNLOAD_FLAGS Flags
@@ -52,9 +62,24 @@ SelfProtectUnloadCallback(
 {
     UNREFERENCED_PARAMETER(Flags);
 
+    CommunicationUninit();
     PsSetCreateProcessNotifyRoutineEx(CreateProcessNotifyCallback, TRUE);
-    FltUnregisterFilter(gSelfProtectData.Filter);
     ProcessCollectorUninit();
+    FltUnregisterFilter(gSelfProtectData.Filter);
+
+    return STATUS_SUCCESS;
+}
+
+static
+NTSTATUS
+FLTAPI
+SelfProtectQueryTearDown(
+    _In_ PCFLT_RELATED_OBJECTS FltObjects,
+    _In_ FLT_INSTANCE_QUERY_TEARDOWN_FLAGS Flags
+)
+{
+    UNREFERENCED_PARAMETER(FltObjects);
+    UNREFERENCED_PARAMETER(Flags);
 
     return STATUS_SUCCESS;
 }
@@ -73,6 +98,7 @@ DriverEntry(
 
     ProcessCollectorInit();
 
+    gSelfProtectData.IsDenyOn = FALSE;
     gSelfProtectData.DriverObject = DriverObject;
     auto status = FltRegisterFilter(DriverObject, &gFltRegistration, &gSelfProtectData.Filter);
     if (!NT_SUCCESS(status))

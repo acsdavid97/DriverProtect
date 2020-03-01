@@ -12,11 +12,10 @@ HandleAddProcess(
 )
 {
     PEPROCESS process = nullptr;
-    auto status = ObReferenceObjectByHandle(AddProcessCommand->ProcessHandle, STANDARD_RIGHTS_READ,
-        *PsProcessType, UserMode, (PVOID*)&process, nullptr);
+    auto status = PsLookupProcessByProcessId((HANDLE)AddProcessCommand->ProcessId, &process);
     if (!NT_SUCCESS(status))
     {
-        KdPrint(("ObReferenceObjectByHandle failed with status 0x%X\n", status));
+        KdPrint(("PsLookupProcessByProcessId failed with status 0x%X\n", status));
         return status;
     }
 
@@ -105,6 +104,14 @@ MessageNotifyCallback(
                 break;
             }
             status = HandleAddProcess((PSELF_PROTECT_ADD_PROCESS_COMMAND)InputBuffer);
+            break;
+        case SelfProtectTurnDenyOn:
+            _InterlockedExchange(&gSelfProtectData.IsDenyOn, TRUE);
+            status = STATUS_SUCCESS;
+            break;
+        case SelfProtectTurnDenyOff:
+            _InterlockedExchange(&gSelfProtectData.IsDenyOn, FALSE);
+            status = STATUS_SUCCESS;
             break;
         default:
             status = STATUS_INVALID_PARAMETER_1;

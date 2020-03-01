@@ -4,12 +4,99 @@
 #include <TlHelp32.h>
 #include "comm_defs.h"
 
+void PrintUsage()
+{
+    printf("usage:\n  Client.exe -e <process_name_to_allow>\n  OR\n  Client.exe -on\n  OR\n  Client.exe -off");
+}
+
+void
+SendHeaderCommand(
+    HANDLE FilterPort,
+    SELF_PROTECT_COMMAND Command
+)
+{
+    DWORD bytesReturned = 0;
+    SELF_PROTECT_MESSAGE header;
+    header.Command = Command;
+    HRESULT status = FilterSendMessage(FilterPort, &header, sizeof(header), nullptr, 0, &bytesReturned);
+    if (status != S_OK)
+    {
+        printf("FilterSendMessage failed with 0x%x\n", status);
+        return;
+    }
+}
+
+void
+TurnDenyOn(
+    HANDLE FilterPort
+)
+{
+    SendHeaderCommand(FilterPort, SelfProtectTurnDenyOn);
+}
+
+void
+TurnDenyOff(
+    HANDLE FilterPort
+)
+{
+    SendHeaderCommand(FilterPort, SelfProtectTurnDenyOff);
+}
+
+void ExceptProcessByPid(
+    HANDLE FilterPort,
+    ULONG ProcessId
+)
+{
+    DWORD bytesReturned = 0;
+    SELF_PROTECT_ADD_PROCESS_COMMAND command;
+    command.Header.Command = SelfProtectAddProcess;
+    command.ProcessId = ProcessId;
+    HRESULT status = FilterSendMessage(FilterPort, &command, sizeof(command), nullptr, 0, &bytesReturned);
+    if (status != S_OK)
+    {
+        printf("FilterSendMessage failed with 0x%x for PID: 0x%x\n", status, ProcessId);
+        return;
+    }
+}
+
+void
+ExceptProcessByName(
+    HANDLE FilterPort,
+    char* ProcessName
+)
+{
+    PROCESSENTRY32 entry;
+    entry.dwSize = sizeof(PROCESSENTRY32);
+
+    bool foundOne = false;
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, NULL);
+    if (Process32First(snapshot, &entry) == TRUE)
+    {
+        while (Process32Next(snapshot, &entry) == TRUE)
+        {
+            if (_stricmp(entry.szExeFile, ProcessName) == 0)
+            {
+                ExceptProcessByPid(FilterPort, entry.th32ProcessID);
+                foundOne = true;
+            }
+        }
+    }
+
+    CloseHandle(snapshot);
+    if (!foundOne)
+    {
+        printf("Could not find process with name %s\n", ProcessName);
+        return;
+    }
+
+    printf("All good!\n");
+}
 
 int main(int argc, char* argv[])
 {
-    if (argc != 2)
+    if (argc != 2 && argc != 3)
     {
-        printf("usage: Client.exe <process_name_to_allow>\n");
+        PrintUsage();
         return -1;
     }
 
@@ -22,42 +109,27 @@ int main(int argc, char* argv[])
         return 0;
     }
 
-    HANDLE process = nullptr;
-    PROCESSENTRY32 entry;
-    entry.dwSize = sizeof(PROCESSENTRY32);
 
-    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, NULL);
-    if (Process32First(snapshot, &entry) == TRUE)
+    if (_stricmp(argv[1], "-e") == 0)
     {
-        while (Process32Next(snapshot, &entry) == TRUE)
+        if (argc != 3)
         {
-            if (_stricmp(entry.szExeFile, argv[1]) == 0)
-            {
-                process = OpenProcess(PROCESS_ALL_ACCESS, FALSE, entry.th32ProcessID);
-            }
+            PrintUsage();
+            return -1;
         }
+        ExceptProcessByName(filterPort, argv[2]);
     }
 
-    CloseHandle(snapshot);
-
-    if (!process)
+    if (_stricmp(argv[1], "-on") == 0)
     {
-        printf("no process found with name %s\n", argv[1]);
-        return -1;
+        TurnDenyOn(filterPort);
     }
 
-    DWORD bytesReturned = 0;
-    SELF_PROTECT_ADD_PROCESS_COMMAND command;
-    command.Header.Command = SelfProtectAddProcess;
-    command.ProcessHandle = process;
-    status = FilterSendMessage(filterPort, &command, sizeof(command), nullptr, 0, &bytesReturned);
-    if (status != S_OK)
+    if (_stricmp(argv[1], "-off") == 0)
     {
-        printf("FilterSendMessage failed with 0x%x\n", status);
-        return 0;
+        TurnDenyOff(filterPort);
     }
 
-    printf("All good!\n");
 
     CloseHandle(filterPort);
     return 0;

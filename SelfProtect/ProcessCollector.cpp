@@ -33,6 +33,7 @@ ProcessCollectorUninit()
     while (current != &gProcessCollectorData.MonitoredProcessesHead)
     {
         auto processEntry = CONTAINING_RECORD(current, MONITORED_PROCESS_ENTRY, Entry);
+        ObDereferenceObject(processEntry->Process);
         ExFreePoolWithTag(processEntry, PROC_COLLECTOR_TAG);
         current = RemoveHeadList(&gProcessCollectorData.MonitoredProcessesHead);
     }
@@ -100,6 +101,7 @@ ProcessCollectorRemove(
         if (processEntry->Process == Process)
         {
             RemoveEntryList(&processEntry->Entry);
+            ObDereferenceObject(processEntry->Process);
             ExFreePoolWithTag(processEntry, PROC_COLLECTOR_TAG);
             status = STATUS_SUCCESS;
         }

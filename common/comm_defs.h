@@ -6,7 +6,9 @@
 
 typedef enum _SELF_PROTECT_COMMAND
 {
-    SelfProtectAddProcess
+    SelfProtectAddProcess,
+    SelfProtectTurnDenyOn,
+    SelfProtectTurnDenyOff
 }SELF_PROTECT_COMMAND, *PSELF_PROTECT_COMMAND;
 
 typedef struct _SELF_PROTECT_MESSAGE
@@ -17,7 +19,7 @@ typedef struct _SELF_PROTECT_MESSAGE
 typedef struct _SELF_PROTECT_ADD_PROCESS_COMMAND
 {
     SELF_PROTECT_MESSAGE Header;
-    HANDLE ProcessHandle;
+    ULONG ProcessId;
 }SELF_PROTECT_ADD_PROCESS_COMMAND, *PSELF_PROTECT_ADD_PROCESS_COMMAND;
 
 #pragma pack(pop)

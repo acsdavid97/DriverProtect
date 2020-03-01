@@ -1,9 +1,12 @@
 #include "Callbacks.h"
 #include "ProcessCollector.h"
+#include "SelfProtect.h"
 
 #include <ntifs.h>
 
 const UNICODE_STRING gMonitoredPath = RTL_CONSTANT_STRING(L"very_specific_monitored_path_in_lowercase");
+
+extern SELF_PROTECT_DATA gSelfProtectData;
 
 constexpr
 static
@@ -46,6 +49,35 @@ IsMonitoredPath(
     return false;
 }
 
+static
+FLT_PREOP_CALLBACK_STATUS
+DenyAccessIfNeeded(
+    _Inout_ PFLT_CALLBACK_DATA Data,
+    _In_ PCUNICODE_STRING Path
+)
+{
+    if (!gSelfProtectData.IsDenyOn)
+    {
+        return FLT_PREOP_SUCCESS_NO_CALLBACK;
+    }
+
+    if (!IsMonitoredPath(Path))
+    {
+        return FLT_PREOP_SUCCESS_NO_CALLBACK;
+    }
+
+    KdPrint(("Create/Open at %wZ!\n", Path));
+    PEPROCESS process = IoThreadToProcess(Data->Thread);
+    if (!ProcessCollectorIsMonitored(process))
+    {
+        KdPrint(("Denied access for process 0x%x at path %wZ!\n", PsGetProcessId(process), Path));
+        // process not in collector, deny access
+        Data->IoStatus.Status = STATUS_ACCESS_DENIED;
+        return FLT_PREOP_COMPLETE;
+    }
+    return FLT_PREOP_SUCCESS_NO_CALLBACK;
+}
+
 FLT_PREOP_CALLBACK_STATUS
 SelfProtectPreCreateCallback(
     _Inout_ PFLT_CALLBACK_DATA Data,
@@ -76,31 +108,8 @@ SelfProtectPreCreateCallback(
         KdPrint(("FltGetFileNameInformation failed with status 0x%X\n", status));
         return FLT_PREOP_SUCCESS_NO_CALLBACK;
     }
-    FLT_PREOP_CALLBACK_STATUS callbackStatus = FLT_PREOP_SUCCESS_NO_CALLBACK;
-    if (IsMonitoredPath(&fileNameInformation->Name))
-    {
-        KdPrint(("Create/Open at %wZ!\n", fileNameInformation->Name));
-        PEPROCESS process = IoThreadToProcess(Data->Thread);
-        if (!ProcessCollectorIsMonitored(process))
-        {
-            KdPrint(("Denied access for process 0x%x at path %wZ!\n", PsGetProcessId(process), fileNameInformation->Name));
-            // process not in collector, deny access
-            auto create = Data->Iopb->Parameters.Create;
-            create.SecurityContext->DesiredAccess &= ~DELETE;
-            create.SecurityContext->DesiredAccess &= ~WRITE_DAC;
-            create.SecurityContext->DesiredAccess &= ~WRITE_OWNER;
-            create.SecurityContext->DesiredAccess &= ~WRITE_OWNER;
-            create.SecurityContext->DesiredAccess &= ~GENERIC_WRITE;
-            create.SecurityContext->DesiredAccess &= ~GENERIC_ALL;
-            create.SecurityContext->DesiredAccess &= ~FILE_WRITE_DATA;
-            create.SecurityContext->DesiredAccess &= ~FILE_WRITE_ATTRIBUTES;
-            create.SecurityContext->DesiredAccess &= ~FILE_WRITE_EA;
-            create.SecurityContext->DesiredAccess &= ~FILE_APPEND_DATA;
-            create.SecurityContext->AccessState->RemainingDesiredAccess = create.SecurityContext->DesiredAccess;
-            create.SecurityContext->AccessState->OriginalDesiredAccess = create.SecurityContext->DesiredAccess;
-            callbackStatus = FLT_PREOP_SUCCESS_NO_CALLBACK;
-        }
-    }
+    
+    FLT_PREOP_CALLBACK_STATUS callbackStatus = DenyAccessIfNeeded(Data, &fileNameInformation->Name);
 
     FltReleaseFileNameInformation(fileNameInformation);
 
@@ -123,6 +132,7 @@ CreateProcessNotifyCallback(
     if (IsMonitoredPath(CreateInfo->ImageFileName))
     {
         KdPrint(("Process with PID: 0x%x and Path: %wZ and CommandLine: %wZ is created\n", ProcessId, CreateInfo->ImageFileName, CreateInfo->CommandLine));
+        ObReferenceObject(Process);
         auto status = ProcessCollectorAdd(Process);
         if (!NT_SUCCESS(status))
         {
